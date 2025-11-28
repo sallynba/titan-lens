@@ -1,0 +1,7 @@
+streamlit
+yfinance
+mplfinance
+pandas
+twstock
+requests
+matplotlib

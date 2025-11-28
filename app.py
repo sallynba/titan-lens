@@ -1,4 +1,38 @@
 import streamlit as st
+# ... 其他 import ...
+
+# --- 1. 頁面設定 ---
+st.set_page_config(
+    page_title="TitanLens 泰坦透視鏡",
+    page_icon="💎",
+    layout="wide"
+)
+
+# =========== 🔒 新增：密碼保護區 ===========
+def check_password():
+    """簡單的密碼檢查機制"""
+    # 這裡設定您的密碼，例如 "8888"
+    SECRET_PASSWORD = "8888" 
+    
+    # 在側邊欄顯示輸入框
+    password = st.sidebar.text_input("🔒 請輸入啟用密碼", type="password")
+    
+    if password == SECRET_PASSWORD:
+        return True
+    elif password == "":
+        st.sidebar.warning("請輸入密碼以解鎖系統")
+        return False
+    else:
+        st.sidebar.error("密碼錯誤")
+        return False
+
+# 如果密碼不對，就停止執行下面的程式
+if not check_password():
+    st.stop()
+# =========================================
+
+# --- 2. 字型處理 ... (接原本的程式碼)
+import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -256,3 +290,4 @@ if run_btn or raw_code:
 
     except Exception as e:
         st.error(f"發生錯誤：{e}")
+

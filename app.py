@@ -5,41 +5,31 @@ import numpy as np
 import mplfinance as mpf
 import twstock
 import os
-import requests
-import matplotlib.font_manager as fm
+import matplotlib.pyplot as plt
 
 # --- 1. 頁面設定 ---
 st.set_page_config(
-    page_title="TitanLens 泰坦透視鏡 v9.3",
+    page_title="TitanLens 泰坦透視鏡",
     page_icon="💎",
     layout="wide"
 )
 
-# --- 2. 字型處理 (自動下載 Noto Sans TC) ---
-@st.cache_resource
-def load_font():
-    font_filename = "NotoSansTC-Regular.ttf"
-    # 使用穩定的 GitHub Raw 連結
-    font_url = "https://raw.githubusercontent.com/google/fonts/main/ofl/notosanstc/NotoSansTC-Regular.ttf"
-    
-    if not os.path.exists(font_filename):
-        try:
-            resp = requests.get(font_url)
-            with open(font_filename, 'wb') as f:
-                f.write(resp.content)
-        except:
-            return "Sans-serif", False
+# --- 2. 字型設定 (針對 Streamlit Cloud 優化) ---
+# 我們在 packages.txt 安裝了 fonts-wqy-zenhei，這裡直接設定使用它
+# 這樣就不用每次跑程式都去下載，速度更快且穩定
+font_name = 'WenQuanYi Zen Hei'
 
-    try:
-        fm.fontManager.addfont(font_filename)
-        font_prop = fm.FontProperties(fname=font_filename)
-        return font_prop.get_name(), True
-    except:
-        return "Sans-serif", False
+# 設定 Matplotlib 全域參數
+plt.rcParams['font.sans-serif'] = [font_name]
+plt.rcParams['axes.unicode_minus'] = False 
 
-custom_font_name, use_chinese = load_font()
+# 設定 mplfinance 的字型樣式
+my_rc_params = {
+    'font.family': font_name,
+    'axes.unicode_minus': False
+}
 
-# --- 3. 核心邏輯函數 (從 Colab v9.3 移植) ---
+# --- 3. 核心邏輯函數 ---
 
 def get_macro_data():
     """抓取總經數據"""
@@ -48,14 +38,12 @@ def get_macro_data():
         data = yf.download(tickers, period="5d", progress=False, auto_adjust=True)
         
         if isinstance(data.columns, pd.MultiIndex):
-            # 處理 MultiIndex 結構
             close_df = data.xs('Close', level=0, axis=1)
             
             dxy = close_df['DX-Y.NYB'].iloc[-1]
             dxy_prev = close_df['DX-Y.NYB'].iloc[-2]
             vix = close_df['^VIX'].iloc[-1]
             
-            # 白話文判讀
             if dxy >= 105: dxy_msg = "🔴 強力吸金 (不利台股)"
             elif dxy <= 100: dxy_msg = "🟢 資金寬鬆 (有利台股)"
             else: dxy_msg = "🟡 中性觀察"
@@ -66,7 +54,7 @@ def get_macro_data():
             else: vix_msg = "🟢 市場安靜"
 
             return {
-                "DXY": f"{dxy:.2f}", "DXY_MSG": dxy_msg, "DXY_Delta": float(dxy - dxy_prev),
+                "DXY": f"{dxy:.2f}", "DXY_MSG": dxy_msg, 
                 "VIX": f"{vix:.2f}", "VIX_MSG": vix_msg
             }
         return None
@@ -74,28 +62,24 @@ def get_macro_data():
         return None
 
 def calculate_indicators(df):
-    """計算技術指標"""
-    # 均線
     df['MA5'] = df['Close'].rolling(window=5).mean()
     df['MA20'] = df['Close'].rolling(window=20).mean()
     df['MA60'] = df['Close'].rolling(window=60).mean()
     df['Vol_MA5'] = df['Volume'].rolling(window=5).mean()
     
-    # KD
     low_list = df['Low'].rolling(window=9).min()
     high_list = df['High'].rolling(window=9).max()
     rsv = (df['Close'] - low_list) / (high_list - low_list) * 100
     df['K'] = rsv.ewm(com=2).mean()
     df['D'] = df['K'].ewm(com=2).mean()
     
-    # MACD
     ema12 = df['Close'].ewm(span=12, adjust=False).mean()
     ema26 = df['Close'].ewm(span=26, adjust=False).mean()
     df['MACD'] = ema12 - ema26
     df['Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
     df['Hist'] = df['MACD'] - df['Signal']
     
-    # OBV (Numpy 優化版)
+    # OBV
     close_arr = df['Close'].to_numpy().flatten()
     vol_arr = df['Volume'].to_numpy().flatten()
     obv = [0]
@@ -109,7 +93,6 @@ def calculate_indicators(df):
     return df
 
 def get_fundamental_info(ticker_obj):
-    """取得基本面資料"""
     try:
         info = ticker_obj.info
         quote_type = info.get('quoteType', '')
@@ -158,15 +141,13 @@ def get_fundamental_info(ticker_obj):
 
 # --- 4. 介面呈現 ---
 
-st.title("💎 TitanLens 泰坦透視鏡 v9.3")
+st.title("💎 TitanLens 泰坦透視鏡")
 st.markdown("### 總經 x 技術 x 籌碼 x 基本面｜全方位診斷系統")
 
-# 側邊欄輸入
 with st.sidebar:
     st.header("🔍 查詢設定")
     raw_code = st.text_input("輸入股票代號", value="2330")
     run_btn = st.button("開始分析", type="primary")
-    
     st.markdown("---")
     st.markdown("**📊 指標說明**")
     st.caption("1. **波浪總經**：判斷大環境順風逆風")
@@ -181,9 +162,8 @@ if run_btn or raw_code:
         market = "台股"
         
     try:
-        # 下載數據
         with st.spinner("🔄 正在連線全球資料庫，進行全方位分析..."):
-            # 1. 個股資料
+            # 資料獲取與處理
             df = yf.download(stock_code, period="6mo", progress=False, auto_adjust=True)
             if df.empty and market == "台股":
                 stock_code = stock_code.replace(".TW", ".TWO")
@@ -193,16 +173,12 @@ if run_btn or raw_code:
                 st.error("❌ 找不到資料，請確認代號是否正確。")
                 st.stop()
                 
-            # 2. 總經資料
             macro = get_macro_data()
-            
-            # 3. 計算指標
             if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
             df = calculate_indicators(df)
             ticker = yf.Ticker(stock_code)
             fund_data = get_fundamental_info(ticker)
             
-            # 4. 取得名稱
             name = stock_code
             if raw_code.isdigit() and raw_code in twstock.codes:
                 name = twstock.codes[raw_code].name
@@ -212,20 +188,16 @@ if run_btn or raw_code:
             latest = df.iloc[-1]
             prev = df.iloc[-2]
 
-        # --- Dashboard 顯示區 ---
-        
-        # 標題區
+        # --- Dashboard ---
         price_change = latest['Close'] - prev['Close']
         st.subheader(f"{name} ({stock_code})")
         st.metric("目前股價", f"{latest['Close']:.2f}", f"{price_change:.2f}")
-        
         st.divider()
 
-        # 區塊 1: 總經與波浪 (3 欄佈局)
+        # 區塊 1: 總經與波浪
         st.markdown("#### 🌍 指標 1：總經與波浪")
         col1, col2, col3 = st.columns(3)
         
-        # 波浪判斷
         wave_status = "盤整浪"
         wave_icon = "⚖️"
         if latest['Close'] > latest['MA60']: 
@@ -236,7 +208,6 @@ if run_btn or raw_code:
             wave_icon = "🔻"
         col1.info(f"**波浪判斷**\n\n{wave_icon} {wave_status}")
         
-        # 總經數據
         if macro:
             col2.warning(f"**美元指數 (DXY)**\n\n{macro['DXY']}\n\n({macro['DXY_MSG']})")
             col3.success(f"**恐慌指數 (VIX)**\n\n{macro['VIX']}\n\n({macro['VIX_MSG']})")
@@ -245,11 +216,10 @@ if run_btn or raw_code:
 
         st.divider()
 
-        # 區塊 2 & 3: 技術與量能 (4 欄佈局)
+        # 區塊 2 & 3: 技術與量能
         st.markdown("#### ⚔️ 指標 2 & 3：技術動能與籌碼")
         c1, c2, c3, c4 = st.columns(4)
         
-        # KD
         k, d = latest['K'], latest['D']
         kd_msg = "中性"
         if prev['K'] < prev['D'] and k > d: kd_msg = "✨ 黃金交叉"
@@ -257,7 +227,6 @@ if run_btn or raw_code:
         elif k > 80: kd_msg = "⚠️ 高檔過熱"
         c1.metric("KD 指標", f"K={k:.1f}", kd_msg)
         
-        # MACD
         hist = latest['Hist']
         macd_msg = "中性"
         if prev['Hist'] < 0 and hist > 0: macd_msg = "🌊 翻紅轉強"
@@ -265,13 +234,11 @@ if run_btn or raw_code:
         elif hist < 0: macd_msg = "📉 空方勢"
         c2.metric("MACD", f"{hist:.2f}", macd_msg)
         
-        # 量能
         vol_msg = "平穩"
         if latest['Volume'] > latest['Vol_MA5'] * 1.5: vol_msg = "🔥 爆量"
         elif latest['Volume'] < latest['Vol_MA5'] * 0.6: vol_msg = "💤 量縮"
         c3.metric("成交量", vol_msg)
         
-        # OBV
         obv_msg = "中性"
         if latest['OBV'] > latest['OBV_MA']:
             if latest['OBV'] > prev['OBV']: obv_msg = "🔴 吸納強勁"
@@ -283,7 +250,7 @@ if run_btn or raw_code:
 
         st.divider()
 
-        # 區塊 4: 基本面 (Expandable)
+        # 區塊 4: 基本面
         with st.expander("🏢 點擊查看：個股體質診斷 / ETF 持股", expanded=True):
             if fund_data['is_etf']:
                 st.write(f"**ETF 描述：** {fund_data.get('desc', '無')}")
@@ -297,22 +264,18 @@ if run_btn or raw_code:
                 f2.metric("EPS", fund_data['eps'])
                 f3.metric("ROE", fund_data['roe'])
                 f4.metric("殖利率", fund_data['yield'])
-                
                 if fund_data['eps'] != "-" and float(fund_data['eps']) < 0:
                     st.error("⚠️ 警告：EPS 為負值，屬無基之彈，投資風險較高！")
 
         # 區塊 5: 圖表
         st.markdown("### 📈 全方位趨勢圖 (含 OBV)")
         
-        # 繪圖設定
+        # 設定圖表樣式 (使用系統字型)
         mc = mpf.make_marketcolors(up='r', down='g', inherit=True)
         if market == "美股": mc = mpf.make_marketcolors(up='g', down='r', inherit=True)
         
-        my_rc = {}
-        if use_chinese:
-            my_rc = {'font.family': custom_font_name, 'axes.unicode_minus': False}
-            
-        s = mpf.make_mpf_style(base_mpf_style='yahoo', marketcolors=mc, rc=my_rc)
+        # 關鍵：直接指定 packages.txt 安裝的字型
+        s = mpf.make_mpf_style(base_mpf_style='yahoo', marketcolors=mc, rc=my_rc_params)
         
         plot_data = df.tail(100)
         colors = ['red' if v >= 0 else 'green' for v in plot_data['Hist']]
@@ -327,10 +290,11 @@ if run_btn or raw_code:
             mpf.make_addplot(plot_data['OBV_MA'], panel=4, color='orange', width=1.0)
         ]
         
+        # 圖表標題使用 Unicode 確保不亂碼
         fig, ax = mpf.plot(plot_data, type='candle', style=s, volume=True, 
                            addplot=add_plots, returnfig=True, 
                            panel_ratios=(4,1,1,1,1),
-                           title=f"\n{name} Trend",
+                           title=f"\n{name} ({stock_code}) Trend",
                            figratio=(10, 14))
         
         st.pyplot(fig)

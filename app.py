@@ -15,7 +15,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# =========== 🔒 密碼保護區 (可自行修改密碼) ===========
+# =========== 🔒 密碼保護區 ===========
 def check_password():
     SECRET_PASSWORD = "8888"  # 設定您的密碼
     if "password_correct" not in st.session_state:
@@ -33,9 +33,9 @@ def check_password():
 
 if not check_password():
     st.stop()
-# ===================================================
+# ====================================
 
-# --- 2. 字型設定 (Linux 環境) ---
+# --- 2. 字型設定 ---
 @st.cache_resource
 def configure_font():
     font_path = '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc'
@@ -222,7 +222,6 @@ def show_analysis_page():
 def show_radar_page():
     st.header("📡 策略雷達掃描")
     
-    # 內建清單
     STOCK_POOLS = {
         "台股-權值股": ["2330", "2317", "2454", "2308", "2303", "2881", "2882", "2603", "1301", "2002", "2382", "3231"],
         "台股-AI概念": ["2330", "2317", "2382", "3231", "2356", "2376", "6669", "3443", "3661", "3035", "2454"],
@@ -231,7 +230,6 @@ def show_radar_page():
         "美股-半導體": ["SOXL", "NVDA", "TSM", "AMD", "AVGO", "QCOM", "TXN", "INTC"]
     }
 
-    # 策略說明
     with st.expander("📖 查看操作策略指南"):
         st.markdown("""
         * **🟢 存股/波段 (強度 1)：** 尋找 KD 金叉且基本面良好 (ROE>10%) 的股票。
@@ -248,6 +246,7 @@ def show_radar_page():
         results = []
         progress_bar = st.progress(0)
         status_text = st.empty()
+        scan_count = 0
         
         for i, code in enumerate(codes):
             status_text.text(f"正在掃描: {code} ...")
@@ -269,12 +268,19 @@ def show_radar_page():
                 if df.empty or len(df) < 30: continue
                 if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
                 
+                scan_count += 1
+                
                 # 計算指標
                 df['Vol_MA5'] = df['Volume'].rolling(window=5).mean()
+                
+                # MACD 計算
                 ema12 = df['Close'].ewm(span=12, adjust=False).mean()
                 ema26 = df['Close'].ewm(span=26, adjust=False).mean()
-                hist = ema12 - ema26 - (ema12 - ema26).ewm(span=9, adjust=False).mean()
+                df['MACD'] = ema12 - ema26
+                df['Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
+                df['Hist'] = df['MACD'] - df['Signal']
                 
+                # KD 計算
                 low_9 = df['Low'].rolling(9).min()
                 high_9 = df['High'].rolling(9).max()
                 rsv = (df['Close'] - low_9) / (high_9 - low_9) * 100
@@ -288,14 +294,25 @@ def show_radar_page():
                 score = 0
                 reasons = []
                 
-                # 爆量
-                if latest['Volume'] > latest['Vol_MA5'] * 1.5 and latest['Close'] > prev['Close']:
+                # 爆量 (Vol > 1.5倍均量 & 漲)
+                vol_val = float(latest['Volume'])
+                vol_ma = float(latest['Vol_MA5'])
+                if vol_val > vol_ma * 1.5 and latest['Close'] > prev['Close']:
                     score += 3; reasons.append("🔥爆量")
-                # MACD
-                if prev['Close'] < prev['Close'] and hist.iloc[-1] > 0 and hist.iloc[-2] < 0: # 簡化判斷
+                
+                # MACD (綠翻紅)
+                hist_now = float(latest['Hist'])
+                hist_prev = float(prev['Hist'])
+                if hist_prev < 0 and hist_now > 0:
                      score += 3; reasons.append("🌊MACD翻紅")
-                # KD
-                if k.iloc[-2] < d.iloc[-2] and k.iloc[-1] > d.iloc[-1] and k.iloc[-1] < 50:
+                
+                # KD (金叉)
+                k_now = float(k.iloc[-1])
+                d_now = float(d.iloc[-1])
+                k_prev = float(k.iloc[-2])
+                d_prev = float(d.iloc[-2])
+                
+                if k_prev < d_prev and k_now > d_now and k_now < 50:
                     score += 1; reasons.append("✨KD金叉")
                 
                 if score >= min_score:
@@ -303,7 +320,6 @@ def show_radar_page():
                     info = ticker.info
                     name = get_stock_name(code, ticker)
                     
-                    # 抓EPS
                     eps = info.get('trailingEps', '-')
                     if eps != '-' and isinstance(eps, (int, float)): eps = f"{eps:.2f}"
                     
@@ -315,20 +331,24 @@ def show_radar_page():
                         "訊號": " ".join(reasons),
                         "EPS": eps
                     })
-            except: continue
+            except Exception as e:
+                # print(e) # 除錯用
+                continue
             
         progress_bar.empty()
         status_text.empty()
         
+        st.info(f"掃描完畢！共分析 {scan_count} 檔有效股票。")
+        
         if results:
             df_res = pd.DataFrame(results)
             df_res = df_res.sort_values(by="強度", ascending=False)
-            st.success(f"🎉 掃描完成！找到 {len(df_res)} 檔標的")
+            st.success(f"🎉 找到 {len(df_res)} 檔符合條件標的！")
             st.dataframe(df_res, hide_index=True, use_container_width=True)
         else:
-            st.warning("⚠️ 掃描結束，未發現符合條件的股票。")
+            st.warning(f"⚠️ 掃描結束，沒有發現強度 >= {min_score} 的股票。")
 
-# --- 6. 主程式架構 (側邊欄導航) ---
+# --- 6. 主程式架構 ---
 
 st.sidebar.title("💎 功能選單")
 page = st.sidebar.radio("請選擇模式：", ["📊 個股全方位診斷", "📡 策略雷達掃描"])
